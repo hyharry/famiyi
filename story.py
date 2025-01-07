@@ -1,7 +1,8 @@
+import os, re
 import requests
 from bs4 import BeautifulSoup
 from fpdf import FPDF
-import os
+
 
 class BlogToPDF:
     def __init__(self, base_url):
@@ -23,7 +24,8 @@ class BlogToPDF:
             latest_blog_link = primary_section.find('a', href=True)
             if latest_blog_link:
                 latest_blog_url = latest_blog_link['href']
-                if latest_blog_url.startswith('/'):  # Adjust URL
+                if latest_blog_url.startswith('/'):
+                    # Remove '/shuiqiangushi' from base URL if present
                     return f"{self.base_url.split('/shuiqiangushi')[0]}{latest_blog_url}"
                 return latest_blog_url
 
@@ -33,11 +35,10 @@ class BlogToPDF:
             print(f"Error fetching the blog list page: {e}")
             return None
 
-    def get_main_image_and_next_page(self, url):
+    def get_main_image_from_page(self, url):
         """Extracts the main image URL and next page link from a blog page."""
         try:
-            full_url = url if url.startswith('http') else f"{self.base_url.rstrip('/')}/{url.lstrip('/')}"
-            response = requests.get(full_url, timeout=10)
+            response = requests.get(url, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -48,15 +49,13 @@ class BlogToPDF:
             # Extract next page link
             next_page_link = soup.find('a', string='下一页')
             next_page_url = next_page_link['href'] if next_page_link else None
-            if next_page_url and next_page_url.startswith('/'):
-                next_page_url = f"{self.base_url.split('/shuiqiangushi')[0]}{next_page_url}"
 
             return image_url, next_page_url
         except requests.RequestException as e:
             print(f"Error fetching page {url}: {e}")
             return None, None
 
-    def save_image_to_pdf(self, image_url, pdf):
+    def save_image_to_pdf(self, image_url, pdf, is_last_page=False, latest_blog_url=None):
         """Downloads an image and adds it to the PDF."""
         full_image_url = image_url if image_url.startswith('http') else f"{self.base_url}/{image_url.lstrip('/')}"
         try:
@@ -68,40 +67,65 @@ class BlogToPDF:
                 file.write(response.content)
 
             pdf.add_page()
-            pdf.image(image_path, x=10, y=10, w=190)
+            # pdf.image(image_path, x=10, y=10, w=190)
+            # self.add_page_number(pdf)  # Add page number after adding the image
+            # if is_last_page and latest_blog_url:
+            #     self.add_latest_blog_url(pdf, latest_blog_url)
             os.remove(image_path)
         except requests.RequestException as e:
             print(f"Error downloading image {full_image_url}: {e}")
         except Exception as e:
             print(f"Error adding image {full_image_url} to PDF: {e}")
 
-    def scrape_and_generate_pdf(self, output_pdf_path):
+    def add_page_number(self, pdf):
+        """Adds a page number to the bottom of the current page."""
+        pdf.set_y(-15)
+        pdf.set_font('Arial', 'I', 8)
+        pdf.cell(0, 10, f'Page {pdf.page_no()}', 0, 0, 'C')
+
+    def add_latest_blog_url(self, pdf, latest_blog_url):
+        """Adds the latest blog URL to the bottom of the last page."""
+        pdf.set_y(-30)
+        pdf.set_font('Arial', 'I', 8)
+        pdf.multi_cell(0, 10, f'Latest blog URL: {latest_blog_url}', 0, 'C')
+
+    def scrape_and_generate_pdf(self):
         """Automates the process of finding the latest blog and generating a PDF."""
         latest_blog_url = self.get_latest_blog_url()
         if not latest_blog_url:
             print("Failed to find the latest blog.")
             return
 
+        if not latest_blog_url.startswith('http'):
+            latest_blog_url = f"{self.base_url.rstrip('/')}/{latest_blog_url.lstrip('/')}"
+
         pdf = FPDF()
         current_url = latest_blog_url
 
         while current_url and current_url not in self.visited_links:
             self.visited_links.add(current_url)
-            image_url, next_page_url = self.get_main_image_and_next_page(current_url)
+            image_url, next_page_url = self.get_main_image_from_page(current_url)
             if image_url:
-                self.save_image_to_pdf(image_url, pdf)
+                is_last_page = not next_page_url
+                self.save_image_to_pdf(image_url, pdf, is_last_page, latest_blog_url)
             current_url = next_page_url
 
         if pdf.page_no() > 0:
+            pattern = r'/(\d+)\.html'  # Matches the last number in the string
+            match = re.search(pattern, latest_blog_url)
+            if match:
+                story_id = match.group(1)
+            else:
+                story_id = 'new'
+            output_pdf_path = f"story_{story_id}.pdf"
             pdf.output(output_pdf_path)
             print(f"PDF saved as {output_pdf_path}")
         else:
             print("No images found to save in the PDF.")
 
-# Usage
+
 if __name__ == "__main__":
     base_url = "https://www.gushi365.com/shuiqiangushi/"  # Blog list page
-    output_pdf_path = "blog_images.pdf"
 
     blog_to_pdf = BlogToPDF(base_url)
-    blog_to_pdf.scrape_and_generate_pdf(output_pdf_path)
+    blog_to_pdf.scrape_and_generate_pdf()
