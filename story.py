@@ -4,45 +4,52 @@ from fpdf import FPDF
 import os
 
 class BlogToPDF:
-    def __init__(self, base_url, latest_blog_url):
+    def __init__(self, base_url):
         self.base_url = base_url.rstrip('/')
-        self.latest_blog_url = latest_blog_url.lstrip('/')
         self.visited_links = set()
 
     def get_latest_blog_url(self):
-        """Fetches the latest blog URL from the base page."""
+        """Finds the latest blog link from the primary section of the base URL."""
         try:
             response = requests.get(self.base_url, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
-            latest_blog_link = soup.find('a', href=f"/{self.latest_blog_url}")
+
+            primary_section = soup.find('section', id='primary')
+            if not primary_section:
+                print("Primary section not found.")
+                return None
+
+            latest_blog_link = primary_section.find('a', href=True)
             if latest_blog_link:
-                return f"{self.base_url}/{self.latest_blog_url}"
+                latest_blog_url = latest_blog_link['href']
+                if latest_blog_url.startswith('/'):  # Adjust URL
+                    return f"{self.base_url.split('/shuiqiangushi')[0]}{latest_blog_url}"
+                return latest_blog_url
+
             print("Latest blog link not found.")
             return None
         except requests.RequestException as e:
-            print(f"Error fetching latest blog URL: {e}")
+            print(f"Error fetching the blog list page: {e}")
             return None
 
-    def get_main_image_from_page(self, url):
-        """Extracts the main image URL from a blog page and finds the next page link."""
+    def get_main_image_and_next_page(self, url):
+        """Extracts the main image URL and next page link from a blog page."""
         try:
-            response = requests.get(url, timeout=10)
+            full_url = url if url.startswith('http') else f"{self.base_url.rstrip('/')}/{url.lstrip('/')}"
+            response = requests.get(full_url, timeout=10)
             response.raise_for_status()
             soup = BeautifulSoup(response.content, 'html.parser')
 
-            # Extract main image
-            main_section = soup.find('main')
-            if not main_section:
-                print(f"Main section not found on {url}.")
-                return None, None
-
-            image_tag = main_section.find('img')
+            # Extract the main image from the blog page
+            image_tag = soup.find('main').find('img') if soup.find('main') else None
             image_url = image_tag['src'] if image_tag and image_tag.get('src') else None
 
             # Extract next page link
-            next_page_link = soup.find('a', text='下一页')
-            next_page_url = f"{self.base_url}/{next_page_link['href'].lstrip('/')}" if next_page_link else None
+            next_page_link = soup.find('a', string='下一页')
+            next_page_url = next_page_link['href'] if next_page_link else None
+            if next_page_url and next_page_url.startswith('/'):
+                next_page_url = f"{self.base_url.split('/shuiqiangushi')[0]}{next_page_url}"
 
             return image_url, next_page_url
         except requests.RequestException as e:
@@ -69,7 +76,7 @@ class BlogToPDF:
             print(f"Error adding image {full_image_url} to PDF: {e}")
 
     def scrape_and_generate_pdf(self, output_pdf_path):
-        """Crawls the blog pages, extracts images, and saves them into a PDF."""
+        """Automates the process of finding the latest blog and generating a PDF."""
         latest_blog_url = self.get_latest_blog_url()
         if not latest_blog_url:
             print("Failed to find the latest blog.")
@@ -80,7 +87,7 @@ class BlogToPDF:
 
         while current_url and current_url not in self.visited_links:
             self.visited_links.add(current_url)
-            image_url, next_page_url = self.get_main_image_from_page(current_url)
+            image_url, next_page_url = self.get_main_image_and_next_page(current_url)
             if image_url:
                 self.save_image_to_pdf(image_url, pdf)
             current_url = next_page_url
@@ -91,18 +98,10 @@ class BlogToPDF:
         else:
             print("No images found to save in the PDF.")
 
-# Improved design and fixed issues:
-# - Added timeout to all requests.
-# - Improved error handling and logging.
-# - Avoided overwriting the `main` section logic if not present.
-# - Simplified redundant checks and added more meaningful messages.
-# - Removed dependency on specific HTML structure assumptions where possible.
-
 # Usage
 if __name__ == "__main__":
-    base_url = "https://www.gushi365.com/"  # Base blog URL
-    latest_blog_url = "info/15732.html"  # Path to the latest blog
+    base_url = "https://www.gushi365.com/shuiqiangushi/"  # Blog list page
     output_pdf_path = "blog_images.pdf"
 
-    blog_to_pdf = BlogToPDF(base_url, latest_blog_url)
+    blog_to_pdf = BlogToPDF(base_url)
     blog_to_pdf.scrape_and_generate_pdf(output_pdf_path)
